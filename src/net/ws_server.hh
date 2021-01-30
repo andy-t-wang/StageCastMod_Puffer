@@ -47,6 +47,9 @@ private:
     std::deque<std::string> send_buffer {};
     size_t send_buffer_offset {0};
 
+    std::deque<std::string> send_vid_buffer {};
+    size_t send_vid_buffer_offset {0};
+
     Connection(TCPSocket && sock, SSLContext & ssl_context);
 
     std::string read();
@@ -54,7 +57,7 @@ private:
 
     /* the connection has data to write to TCPSocket directly,
      * or write to NBSecureSocket's internal send_buffer */
-    bool data_to_write() const { return send_buffer.size() > 0; }
+    bool data_to_write() const { return send_buffer.size() > 0 || send_vid_buffer.size() > 0; }
 
     /* tell the poller if the connection is interested in sending
      * i.e., it or its NBSecureSocket has pending data in the send_buffer */
@@ -103,6 +106,8 @@ public:
   void set_close_callback(CloseCallback func) { close_callback_ = func; }
 
   bool queue_frame(const uint64_t connection_id, const WSFrame & frame);
+
+  bool queue_vid_frame(const uint64_t connection_id, const WSFrame & frame);
 
   Address peer_addr(const uint64_t connection_id) const;
 
