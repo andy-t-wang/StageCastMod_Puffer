@@ -7,6 +7,7 @@
 #include <crypto++/sha.h>
 #include <crypto++/hex.h>
 #include <crypto++/base64.h>
+#include <unistd.h>
 
 #include "http_response.hh"
 #include "exception.hh"
@@ -128,24 +129,39 @@ string WSServer<NBSecureSocket>::Connection::read()
 template<>
 void WSServer<TCPSocket>::Connection::write()
 {
-  while (not send_buffer.empty()) {
-    const string & buffer = send_buffer.front();
+  while (not send_buffer.empty() || not send_vid_buffer.empty()) {
+    // sleep(12);
 
-    /* need to convert to string_view iterator to avoid copy */
-    string_view buffer_view = buffer;
+    if(not send_buffer.empty()){
+      const string & buffer = send_buffer.front();
+      string_view buffer_view = buffer;
+      const auto view_it = socket.write(
+              buffer_view.substr(send_buffer_offset), false); 
+      if (view_it != buffer_view.cend()) {
+        /* save the offset of the remaining string */
+        send_buffer_offset = view_it - buffer_view.cbegin();
+        break;
+      } else {
+        /* move onto the next item in the deque */
+        send_buffer_offset = 0;
+        send_buffer.pop_front();
+      }
+    }
 
-    /* set write_all to false because socket might be unable to write all */
-    const auto view_it = socket.write(
-        buffer_view.substr(send_buffer_offset), false);
-
-    if (view_it != buffer_view.cend()) {
-      /* save the offset of the remaining string */
-      send_buffer_offset = view_it - buffer_view.cbegin();
-      break;
-    } else {
-      /* move onto the next item in the deque */
-      send_buffer_offset = 0;
-      send_buffer.pop_front();
+    if(not send_vid_buffer.empty()){
+      const string & buffer = send_vid_buffer.front();
+      string_view buffer_view = buffer;
+      const auto view_it = socket.write(
+              buffer_view.substr(send_vid_buffer_offset), false); 
+      if (view_it != buffer_view.cend()) {
+        /* save the offset of the remaining string */
+        send_vid_buffer_offset = view_it - buffer_view.cbegin();
+        break;
+      } else {
+        /* move onto the next item in the deque */
+        send_vid_buffer_offset = 0;
+        send_vid_buffer.pop_front();
+      }
     }
   }
 }
@@ -373,6 +389,26 @@ bool WSServer<SocketType>::queue_frame(const uint64_t connection_id,
   /* frame.to_string() inevitably copies frame.payload_ into the return string,
    * but the return string will be moved into conn.send_buffer without copy */
   conn.send_buffer.emplace_back(frame.to_string());
+  return true;
+}
+/* New Class to make separate queue for video frames. So I can stagger the
+websocket messages sent
+
+*/
+template<class SocketType>
+bool WSServer<SocketType>::queue_vid_frame(const uint64_t connection_id,
+                                       const WSFrame & frame)
+{
+  Connection & conn = connections_.at(connection_id);
+
+  if (conn.state != Connection::State::Connected) {
+    cerr << connection_id << ": not connected; cannot queue frame" << endl;
+    return false;
+  }
+
+  /* frame.to_string() inevitably copies frame.payload_ into the return string,
+   * but the return string will be moved into conn.send_buffer without copy */
+  conn.send_vid_buffer.emplace_back(frame.to_string());
   return true;
 }
 

@@ -12,6 +12,7 @@
 #include <random>
 #include <algorithm>
 #include <pqxx/pqxx>
+#include <unistd.h>
 
 #include "util.hh"
 #include "strict_conversions.hh"
@@ -41,7 +42,7 @@ YAML::Node config;
 static map<string, shared_ptr<Channel>> channels;  /* key: channel name */
 static map<uint64_t, WebSocketClient> clients;  /* key: connection ID */
 
-static const size_t MAX_WS_FRAME_B = 100 * 1024;  /* 10 KB */
+static const size_t MAX_WS_FRAME_B = 5 * 1024;  /* 10 KB */
 static const unsigned int MAX_IDLE_MS = 60000; /* clean idle connections */
 
 static const unsigned int MAX_CONNECTION_NUM = 10; /* max connections */
@@ -145,7 +146,7 @@ void serve_video_to_client(WebSocketServer & server,
                              ssim);
     string frame_payload = video_msg.to_string();
     next_vsegment.read(frame_payload, MAX_WS_FRAME_B - frame_payload.size());
-
+    //sleep(5);
     WSFrame frame {true, WSFrame::OpCode::Binary, move(frame_payload)};
     server.queue_frame(client.connection_id(), frame);
   }
@@ -207,7 +208,8 @@ void serve_audio_to_client(WebSocketServer & server,
     next_asegment.read(frame_payload, MAX_WS_FRAME_B - frame_payload.size());
 
     WSFrame frame {true, WSFrame::OpCode::Binary, move(frame_payload)};
-    server.queue_frame(client.connection_id(), frame);
+    //sleep(5);
+    server.queue_vid_frame(client.connection_id(), frame);
   }
 
   /* finish sending */
@@ -290,7 +292,6 @@ void serve_client(WebSocketServer & server, WebSocketClient & client)
       }
     }
   }
-
   if (client.audio_playback_buf() <= WebSocketClient::MAX_BUFFER_S and
       client.audio_in_flight().value() == 0 and channel->aready_to_serve(next_ats)
       and next_ats <= next_vts) {
@@ -559,16 +560,14 @@ void handle_client_video_ack(WebSocketClient & client,
          << "invalid init_id (but should not have received)" << endl;
     return;
   }
-
+  if (msg.byte_offset + msg.byte_length != msg.total_byte_length) {
+    return;
+  }
   client.set_video_playback_buf(msg.video_buffer);
   client.set_audio_playback_buf(msg.audio_buffer);
   client.set_cum_rebuffer(msg.cum_rebuffer);
 
-  /* only interested in the event when the last segment is acked */
-  if (msg.byte_offset + msg.byte_length != msg.total_byte_length) {
-    return;
-  }
-
+  
   /* allow sending another chunk */
   client.set_client_next_vts(msg.timestamp + channel->vduration());
 
@@ -614,6 +613,10 @@ void handle_client_audio_ack(WebSocketClient & client,
   if (msg.init_id != client.init_id().value()) {
     cerr << client.signature() << ": warning: ignored messages with "
          << "invalid init_id (but should not have received)" << endl;
+    return;
+  }
+
+  if (msg.byte_offset + msg.byte_length != msg.total_byte_length) {
     return;
   }
 
